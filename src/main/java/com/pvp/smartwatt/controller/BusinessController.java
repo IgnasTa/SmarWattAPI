@@ -16,7 +16,7 @@ import java.util.List;
 
 public class BusinessController {
 
-    @GetMapping("/upload/plan1")
+    @PostMapping("/upload/plan1")
     public ResponseEntity<?> uploadUsageFilePlan1(@RequestParam("file") MultipartFile csvFile) {
         if (csvFile.isEmpty()) {
             return ResponseEntity.badRequest().body("File is empty. Please upload a valid CSV file.");
@@ -91,7 +91,7 @@ public class BusinessController {
         }
     }
 
-    @GetMapping("/upload/plan2")
+    @PostMapping("/upload/plan2")
     public ResponseEntity<?> uploadUsageFilePlan2(@RequestParam("file") MultipartFile csvFile) {
         if (csvFile.isEmpty()) {
             return ResponseEntity.badRequest().body("File is empty. Please upload a valid CSV file.");
