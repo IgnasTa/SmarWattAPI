@@ -1,7 +1,10 @@
 package com.pvp.smartwatt.controller;
 
 import com.pvp.smartwatt.model.ConsumptionModel;
+import com.pvp.smartwatt.model.GenUseDataHourly;
 import com.pvp.smartwatt.model.ResponseDAO;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -9,7 +12,11 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.*;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -17,163 +24,162 @@ import java.util.List;
 public class BusinessController {
 
     @PostMapping("/upload/plan1")
-    public ResponseEntity<?> uploadUsageFilePlan1(@RequestParam("file") MultipartFile csvFile) {
-        if (csvFile.isEmpty()) {
-            return ResponseEntity.badRequest().body("File is empty. Please upload a valid CSV file.");
-        }
+    public ResponseEntity<?> uploadUsageFilePlan1(
+            @RequestParam(value = "file", required = true) MultipartFile csvFile,
+            @RequestParam(value = "file2", required = false) MultipartFile csvFile2,
+            @RequestParam(value = "file3", required = false) MultipartFile csvFile3) {
+        List<GenUseDataHourly> combinedData = mapToGenUseData(csvFile);
+        combinedData = mergeUsageConsuptionData(combinedData, csvFile2);
+        combinedData = mergeUsageConsuptionData(combinedData, csvFile3);
 
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(csvFile.getInputStream()))) {
-            String line;
-            List<ConsumptionModel> data = new ArrayList<>();
-
-
-            String linezero = reader.readLine();
-            Double boughtFromGridTotal = 0d;
-            Double totalConsuption = 0d;
-            Double storingBalance = 0d;
-            Double totalStoring = 0d;
-            boolean invertConsuption = true;
-            while ((line = reader.readLine()) != null) {
-
-                String[] values = line.split(";");
-                OffsetDateTime dateTime = OffsetDateTime.parse(values[10].replace("\"", "").trim());
-                Double consumption = invertConsuption ? Double.parseDouble(values[13].replace("\"", "").trim()) : -Double.parseDouble(values[13].replace("\"", "").trim());
-                invertConsuption = !invertConsuption;
-                totalConsuption += consumption > 0 ? consumption : 0;
-                Double storingAmount = 0d;
-                Double boughtFromGrid = 0d;
-
-                if (consumption < 0){
-                    storingAmount = -consumption;
-                    storingBalance += storingAmount * 0.65;
-                }
-                if(consumption > 0){
-                    if(consumption < storingBalance){
-                        storingBalance -= consumption;
-                    }
-                    else if(storingBalance > 0){
-                        boughtFromGrid = consumption - storingBalance;
-                        storingBalance = 0d;
-                        boughtFromGridTotal += boughtFromGrid;
-                    }
-                    else{
-                        boughtFromGrid = consumption;
-                        boughtFromGridTotal += consumption;
-                    }
-                }
-                totalStoring +=storingAmount * 0.65;
-
-
-                ConsumptionModel entry = ConsumptionModel.builder()
-                        .dateTime(dateTime)
-                        .consumption(consumption)
-                        .totalConsumption(totalConsuption)
-                        .storingAmount(storingAmount)
-                        .storingBalance(storingBalance)
-                        .boughtFromGrid(boughtFromGrid)
-                        .boughtFromGridBalance(boughtFromGridTotal)
-                        .totalStoring(totalStoring)
-                        .build();
-                data.add(entry);
-            }
-
-            data.forEach(row -> System.out.println(row.toString()));
-            ConsumptionModel totals = data.getLast();
-            ResponseDAO responseDAO = ResponseDAO.builder()
-                    .totalConsumption(Math.round(totals.getTotalConsumption() *100.0)/100.0)
-                    .totalEnergyBoughtFromGrid(Math.round(totals.getBoughtFromGridBalance() *100.0)/100.0)
-                    .totalEnergyStored(Math.round(totals.getTotalStoring() *100.0)/100.0)
-                    .planPrice(Math.round(totals.getBoughtFromGridBalance() * 0.221 *100.0)/100.0)
-                    .build();
-            return ResponseEntity.ok(responseDAO);
-        } catch (IOException e) {
-            return ResponseEntity.status(500).body("Error processing file: " + e.getMessage());
-        }
+        double electricityPrice = 0.221;
+        double storageMonetaryFee = 0.0;
+        double storagePercentageCutFee = 0.035;
+        return getPriceCalculations(combinedData, electricityPrice, storageMonetaryFee, storagePercentageCutFee);
     }
 
+
+
+
     @PostMapping("/upload/plan2")
-    public ResponseEntity<?> uploadUsageFilePlan2(@RequestParam("file") MultipartFile csvFile) {
-        if (csvFile.isEmpty()) {
-            return ResponseEntity.badRequest().body("File is empty. Please upload a valid CSV file.");
-        }
+    public ResponseEntity<?> uploadUsageFilePlan2(
+            @RequestParam(value = "file", required = true) MultipartFile csvFile,
+            @RequestParam(value = "file2", required = false) MultipartFile csvFile2,
+            @RequestParam(value = "file3", required = false) MultipartFile csvFile3) {
+        List<GenUseDataHourly> combinedData = mapToGenUseData(csvFile);
+        combinedData = mergeUsageConsuptionData(combinedData, csvFile2);
+        combinedData = mergeUsageConsuptionData(combinedData, csvFile3);
 
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(csvFile.getInputStream()))) {
-            String line;
-            List<ConsumptionModel> data = new ArrayList<>();
+        double electricityPrice = 0.221;
+        double storageMonetaryFee = 0.065;
+        double storagePercentageCutFee = 0.0;
+        return getPriceCalculations(combinedData, electricityPrice, storageMonetaryFee, storagePercentageCutFee);
+    }
 
+    @PostMapping("/upload/plan3/{kwCapacity}")
+    public ResponseEntity<?> uploadUsageFilePlan3(
+            @PathVariable(value = "kwCapacity", required = true) Double kwCapacity) {
 
-            String linezero = reader.readLine();
-            Double boughtFromGridTotal = 0d;
-            Double totalConsuption = 0d;
-            Double storingBalance = 0d;
-            Double totalStoring = 0d;
-            boolean invertConsuption = true;
-            while ((line = reader.readLine()) != null) {
+        double kwPrice = 10.0;
+        double price = 12 * kwCapacity * kwPrice;
+        return ResponseEntity.ok(price);
+    }
 
-                String[] values = line.split(";");
-                OffsetDateTime dateTime = OffsetDateTime.parse(values[10].replace("\"", "").trim());
-                Double consumption = invertConsuption ? Double.parseDouble(values[13].replace("\"", "").trim()) : -Double.parseDouble(values[13].replace("\"", "").trim());
-                invertConsuption = !invertConsuption;
-                totalConsuption += consumption > 0 ? consumption : 0;
-                Double storingAmount = 0d;
-                Double boughtFromGrid = 0d;
+    private ResponseEntity<?> getPriceCalculations(List<GenUseDataHourly> combinedData, double electricityPrice, double storageMonetaryFee, double storagePercentageCutFee) {
+        List<ConsumptionModel> chartData = new ArrayList<>();
+        double hourlyPrice = electricityPrice;
+        double rollingCost = 0.0;
+        double boughtFromGridTotal = 0.0;
+        double totalConsuption = 0.0;
+        double totalGeneration = 0.0;
+        double totalGenerationStorage = 0.0;
+        double totalGenerationStorageReturned = 0.0;
+        double storingBalance = 0.0;
 
-                if (consumption < 0){
-                    storingAmount = -consumption;
-                    storingBalance += storingAmount ;
-                }
-                if(consumption > 0){
-                    if(consumption < storingBalance){
-                        storingBalance -= consumption;
-                    }
-                    else if(storingBalance > 0){
-                        boughtFromGrid = consumption - storingBalance;
-                        storingBalance = 0d;
-                        boughtFromGridTotal += boughtFromGrid;
-                    }
-                    else{
-                        boughtFromGrid = consumption;
-                        boughtFromGridTotal += consumption;
-                    }
-                }
-                totalStoring +=storingAmount;
+        for(var row : combinedData){
+            double consumption = row.getConsumption();
+            double generation = row.getGeneration();
 
-
-                ConsumptionModel entry = ConsumptionModel.builder()
-                        .dateTime(dateTime)
-                        .consumption(consumption)
-                        .totalConsumption(totalConsuption)
-                        .storingAmount(storingAmount)
-                        .storingBalance(storingBalance)
-                        .boughtFromGrid(boughtFromGrid)
-                        .boughtFromGridBalance(boughtFromGridTotal)
-                        .totalStoring(totalStoring)
-                        .build();
-                data.add(entry);
+            totalConsuption += consumption;
+            totalGeneration += generation;
+            totalGenerationStorage += generation * (1 - storagePercentageCutFee);
+            if (storingBalance <= consumption){
+                totalGenerationStorageReturned += storingBalance;
+                boughtFromGridTotal  += consumption - storingBalance;
+                rollingCost += (consumption - storingBalance) * hourlyPrice;
+                storingBalance = 0;
+            }else{
+                storingBalance -= consumption;
+                totalGenerationStorageReturned += consumption;
             }
+            storingBalance += generation * (1 - storagePercentageCutFee);
 
-            data.forEach(row -> System.out.println(row.toString()));
-            ConsumptionModel totals = data.getLast();
+            chartData.add(ConsumptionModel.builder()
+                    .dateTime(row.getDateTime())
+                    .totalConsumption(round(totalConsuption))
+                    .totalStoring(round(totalGenerationStorage))
+                    .totalStoringReturned(round(totalGenerationStorageReturned))
+                    .totalBoughtFromGrid(round(boughtFromGridTotal))
+                    .rollingCost(round(rollingCost))
+                    .build());
 
-            ResponseDAO responseDAO = ResponseDAO.builder()
-                    .totalConsumption(Math.round(totals.getTotalConsumption() *100.0)/100.0)
-                    .totalEnergyBoughtFromGrid(Math.round(totals.getBoughtFromGridBalance() *100.0)/100.0)
-                    .totalEnergyStored(Math.round(totals.getTotalStoring() *100.0)/100.0)
-                    .planPrice(Math.round((totals.getTotalStoring()*0.06655 + totals.getBoughtFromGridBalance() * 0.221) *100.0)/100.0)
-                    .build();
-
-
-
-
-//            ResponseDAO responseDAO = ResponseDAO.builder()
-//                    .totalConsumption(totals.getTotalConsumption())
-//                    .totalEnergyBoughtFromGrid(totals.getBoughtFromGridBalance())
-//                    .totalEnergyStored(totals.getTotalStoring())
-//                    .planPrice(totals.getTotalStoring()*0.06655 + totals.getBoughtFromGridBalance() * 0.221)
-//                    .build();
-            return ResponseEntity.ok(responseDAO);
-        } catch (IOException e) {
-            return ResponseEntity.status(500).body("Error processing file: " + e.getMessage());
         }
+
+        double totalPrice = boughtFromGridTotal * electricityPrice + totalGenerationStorageReturned * storageMonetaryFee;
+        var result = ResponseDAO.builder()
+                .totalConsumption(round(totalConsuption))
+                .totalEnergyStored(round(totalGenerationStorageReturned))
+                .totalEnergyBoughtFromGrid(round(boughtFromGridTotal))
+                .planPrice(round(totalPrice))
+                .chartData(chartData)
+                .build();
+
+        return ResponseEntity.ok(result);
+    }
+    private double round(double positive){
+        return Math.floor(positive * 100) / 100;
+    }
+    private List<GenUseDataHourly> mapToGenUseData(MultipartFile csvFile){
+        try{
+            BufferedReader reader = new BufferedReader(new InputStreamReader(csvFile.getInputStream()));
+            CSVParser parser = new CSVParser(reader, CSVFormat.DEFAULT.builder()
+                    .setHeader()
+                    .setSkipHeaderRecord(true)
+                    .setDelimiter(';')
+                    .setQuote('"')
+                    .build());
+            List<GenUseDataHourly> data = (List<GenUseDataHourly>) parser.stream()
+                    .filter(record -> record.get("Energijos tipas").equals("P-") || record.get("Energijos tipas").equals("P+"))
+                    .map(record -> GenUseDataHourly.builder()
+                            .dateTime(OffsetDateTime.parse(record.get("Data, valanda")))
+                            .generation(record.get("Energijos tipas").equals("P-") ? Double.parseDouble(record.get("Kiekis, kWh")) : 0.0)
+                            .consumption(record.get("Energijos tipas").equals("P+") ? Double.parseDouble(record.get("Kiekis, kWh")) : 0.0)
+                            .build()
+                    )
+                    .collect(Collectors.groupingBy(
+                            GenUseDataHourly::getDateTime,
+                            Collectors.collectingAndThen(
+                                    Collectors.toList(),
+                                    list -> GenUseDataHourly.builder()
+                                            .dateTime(list.getFirst().getDateTime())
+                                            .generation(list.stream().mapToDouble(GenUseDataHourly::getGeneration).sum())
+                                            .consumption(list.stream().mapToDouble(GenUseDataHourly::getConsumption).sum())
+                                            .build()
+                            )
+                    ))
+                    .values()
+                    .stream()
+                    .sorted(Comparator.comparing(GenUseDataHourly::getDateTime))
+                    .toList();
+
+            return data;
+        }
+        catch (Exception e){
+            return null;
+        }
+    }
+    private List<GenUseDataHourly> mergeUsageConsuptionData(List<GenUseDataHourly>originalList, MultipartFile csvFile){
+        if (csvFile != null) {
+            List<GenUseDataHourly> additionalList = mapToGenUseData(csvFile);
+            if(additionalList != null){
+                return Stream.concat(originalList.stream(), additionalList.stream())
+                        .collect(Collectors.groupingBy(
+                                GenUseDataHourly::getDateTime,
+                                Collectors.collectingAndThen(
+                                        Collectors.toList(),
+                                        list -> GenUseDataHourly.builder()
+                                                .dateTime(list.getFirst().getDateTime())
+                                                .generation(list.stream().mapToDouble(GenUseDataHourly::getGeneration).sum())
+                                                .consumption(list.stream().mapToDouble(GenUseDataHourly::getConsumption).sum())
+                                                .build()
+                                )
+                        ))
+                        .values()
+                        .stream()
+                        .sorted(Comparator.comparing(GenUseDataHourly::getDateTime))
+                        .collect(Collectors.toList());
+            }
+        }
+        return originalList;
     }
 }
